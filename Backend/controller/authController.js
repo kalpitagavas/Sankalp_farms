@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
+const generateToken = require('../utils/generateToken');
 
 // @desc    Register a new user
 // @route   POST /api/users/register
@@ -8,20 +9,16 @@ const registerUser = async (req, res) => {
     try {
         const { name, email, password, phone, adminSecretKey } = req.body;
 
-        // 1. Check if user already exists
         const userExists = await User.findOne({ email });
         if (userExists) {
             return res.status(400).json({ message: 'User already exists with this email' });
         }
 
-        // 2. Hash the password securely
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // 3. Real-world check: Match against the .env secret key
         const isTryingToBecomeAdmin = adminSecretKey === process.env.ADMIN_SECRET_KEY;
 
-        // 4. Create the user in MongoDB
         const user = await User.create({
             name,
             email,
@@ -36,6 +33,7 @@ const registerUser = async (req, res) => {
                 name: user.name,
                 email: user.email,
                 isAdmin: user.isAdmin,
+                token: generateToken(user._id),
                 message: user.isAdmin ? 'Admin registration successful!' : 'User registration successful!'
             });
         } else {
@@ -46,20 +44,23 @@ const registerUser = async (req, res) => {
     }
 };
 
-const loginUser=async(req,res)=>{
-    try{
-        const {email,password}=req.body
+// @desc    Login user
+// @route   POST /api/users/login
+// @access  Public
+const loginUser = async (req, res) => {
+    try {
+        const { email, password } = req.body;
 
-        const user=await User.findOne({email})
-        // 2. Check if user exists and password matches the hashed version
-        if(user && (await bcrypt.compare(password,user.password))){
+        const user = await User.findOne({ email });
+        if (user && (await bcrypt.compare(password, user.password))) {
             res.json({
-              _id: user._id,
+                _id: user._id,
                 name: user.name,
                 email: user.email,
                 isAdmin: user.isAdmin,
+                token: generateToken(user._id),
                 message: 'Login successful!'
-            })
+            });
         } else {
             res.status(401).json({ message: 'Invalid email or password' });
         }
@@ -68,7 +69,70 @@ const loginUser=async(req,res)=>{
     }
 };
 
+// @desc    Get user profile
+// @route   GET /api/users/profile
+// @access  Private
+const getUserProfile = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (user) {
+            res.status(200).json({
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone,
+                isAdmin: user.isAdmin,
+                addresses: user.addresses
+            });
+        } else {
+            res.status(404).json({ message: 'User not found' });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: `Server Error: ${err.message}` });
+    }
+};
+
+// @desc    Update user profile
+// @route   PUT /api/users/profile
+// @access  Private
+const updateUserProfile = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+
+        if (user) {
+            user.name = req.body.name || user.name;
+            user.email = req.body.email || user.email;
+            user.phone = req.body.phone || user.phone;
+
+            if (req.body.password) {
+                const salt = await bcrypt.genSalt(10);
+                user.password = await bcrypt.hash(req.body.password, salt);
+            }
+
+            const updatedUser = await user.save(); // FIXED: user.save() instead of User.save()
+
+            res.status(200).json({
+                _id: updatedUser._id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                phone: updatedUser.phone,
+                isAdmin: updatedUser.isAdmin,
+                token: generateToken(updatedUser._id),
+                message: 'Profile updated successfully'
+            });
+        } else {
+            res.status(404).json({ message: 'User not found' });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: `Server Error: ${err.message}` });
+    }
+};
+
 module.exports = {
     registerUser,
-    loginUser
+    loginUser,
+    getUserProfile,
+    updateUserProfile
 };
